@@ -32,9 +32,9 @@ def metadata_unserialize(m):
 class PlugWrapper(object):
     def __init__(self, addr, queries_addr):
         ctx = zmq.Context.instance()
-        self.socket = ctx.socket(zmq.SUB)
-        self.socket.connect(addr)
-        self.socket.setsockopt(zmq.SUBSCRIBE, b'')
+        self.events = ctx.socket(zmq.SUB)
+        self.events.connect(addr)
+        self.events.setsockopt(zmq.SUBSCRIBE, b'')
         self.queries = ctx.socket(zmq.REQ)
         self.queries.connect(queries_addr)
         self._handlers = {}
@@ -42,12 +42,13 @@ class PlugWrapper(object):
     def listen(self):
         try:
             while True:
-                msg = msgpack.unpackb(self.socket.recv(), use_list=False)
+                msg = msgpack.unpackb(self.events.recv(), use_list=False)
                 cmd = self._handlers.get(msg[0].decode(), None)
                 if cmd:
                     cmd(*msg[1:])
         except KeyboardInterrupt:
-            self.socket.close()
+            self.events.close()
+            self.queries.close()
 
     def handler(self, name_=None):
         def decorator(h):
@@ -79,6 +80,7 @@ plug = PlugWrapper('tcp://127.0.0.1:15348', 'tcp://127.0.0.1:15349')
 @plug.handler()
 @unserializers(metadata_unserialize)
 def start_upload(metadata):
+    print('START', metadata.filename)
     filename = root.joinpath(metadata.filename)
     tmp_file = to_tmp(filename)
     try:
@@ -92,6 +94,7 @@ def start_upload(metadata):
 @plug.handler()
 @unserializers(metadata_unserialize, None, None)
 def upload_chunk(metadata, offset, chunk):
+    print('UPLOAD', metadata.filename, offset, chunk)
     tmp_file = to_tmp(root.joinpath(metadata.filename))
     try:
         with open(tmp_file, 'r+b') as f:
@@ -104,6 +107,7 @@ def upload_chunk(metadata, offset, chunk):
 @plug.handler()
 @unserializers(metadata_unserialize)
 def end_upload(metadata):
+    print('END', metadata.filename)
     filename = root.joinpath(metadata.filename)
     tmp_file = to_tmp(filename)
     try:
@@ -118,6 +122,7 @@ def end_upload(metadata):
 @plug.handler()
 @unserializers(metadata_unserialize)
 def abort_upload(metadata):
+    print('ABORT', metadata.filename)
     filename = root.joinpath(metadata.filename)
     tmp_file = to_tmp(filename)
     try:
