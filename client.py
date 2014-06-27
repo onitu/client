@@ -32,23 +32,23 @@ def metadata_unserialize(m):
 class PlugWrapper(object):
     def __init__(self, addr, queries_addr):
         ctx = zmq.Context.instance()
-        self.events = ctx.socket(zmq.SUB)
-        self.events.connect(addr)
-        self.events.setsockopt(zmq.SUBSCRIBE, b'')
-        self.queries = ctx.socket(zmq.REQ)
-        self.queries.connect(queries_addr)
+        self.handlers_socket = ctx.socket(zmq.REP)
+        self.handlers_socket.connect(addr)
+        self.server_socket = ctx.socket(zmq.REQ)
+        self.server_socket.connect(queries_addr)
         self._handlers = {}
 
     def listen(self):
         try:
             while True:
-                msg = msgpack.unpackb(self.events.recv(), use_list=False)
+                msg = msgpack.unpackb(self.handlers_socket.recv(), use_list=False)
                 cmd = self._handlers.get(msg[0].decode(), None)
                 if cmd:
                     cmd(*msg[1:])
+                self.handlers_socket.send(b'merci')
         except KeyboardInterrupt:
-            self.events.close()
-            self.queries.close()
+            self.handlers_socket.close()
+            self.server_socket.close()
 
     def handler(self, name_=None):
         def decorator(h):
@@ -141,9 +141,9 @@ class Watcher(pyinotify.ProcessEvent):
         filename = root.relpathto(abs_path)
         #metadata = plug.get_metadata(filename)
         #update_file(metadata, abs_path)
-        plug.queries.send(msgpack.packb(filename))
+        plug.server_socket.send(msgpack.packb(filename))
         print(filename)
-        print(plug.queries.recv())
+        print(plug.server_socket.recv())
 
 
 print('Connected')
