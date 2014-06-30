@@ -15,6 +15,11 @@ def to_tmp(path):
     return path.parent.joinpath('.' + path.name + TMP_EXT)
 
 
+def metadata_serializer(m):
+    props = [getattr(m, p) for p in m.PROPERTIES]
+    return m.fid, props, m.extra
+
+
 class MetadataWrapper(object):
     PROPERTIES = ('filename', 'size', 'owners', 'uptodate')
 
@@ -23,6 +28,10 @@ class MetadataWrapper(object):
         for name, value in zip(self.PROPERTIES, props):
             setattr(self, name, value)
         self.extra = extra
+
+    def write(self):
+        plug.server_socket.send(msgpack.packb((b'metadata write', metadata_serializer(self))))
+        plug.server_socket.recv()
 
 
 def metadata_unserialize(m):
@@ -49,6 +58,13 @@ class PlugWrapper(object):
         except KeyboardInterrupt:
             self.handlers_socket.close()
             self.server_socket.close()
+
+    def get_metadata(self, filename):
+        self.server_socket.send(msgpack.packb(('get_metadata', filename)))
+        m = msgpack.unpackb(self.server_socket.recv())
+        metadata = metadata_unserialize(m)
+        print(m)
+        return metadata
 
     def handler(self, name_=None):
         def decorator(h):
@@ -116,7 +132,7 @@ def end_upload(metadata):
     except (IOError, OSError) as e:
         pass # Report to plug
     metadata.extra['revision'] = mtime
-    #metadata.write()
+    metadata.write()
 
 
 @plug.handler()
@@ -139,9 +155,9 @@ class Watcher(pyinotify.ProcessEvent):
             return
 
         filename = root.relpathto(abs_path)
-        #metadata = plug.get_metadata(filename)
+        metadata = plug.get_metadata(filename)
         #update_file(metadata, abs_path)
-        plug.server_socket.send(msgpack.packb(filename))
+        plug.server_socket.send(msgpack.packb((b'file_change', filename))) # -> update_file
         print(filename)
         print(plug.server_socket.recv())
 
