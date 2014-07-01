@@ -30,7 +30,8 @@ class MetadataWrapper(object):
         self.extra = extra
 
     def write(self):
-        plug.server_socket.send(msgpack.packb((b'metadata write', metadata_serializer(self))))
+        plug.server_socket.send(msgpack.packb((b'metadata write',
+                                               metadata_serializer(self))))
         plug.server_socket.recv()
 
 
@@ -50,7 +51,8 @@ class PlugWrapper(object):
     def listen(self):
         try:
             while True:
-                msg = msgpack.unpackb(self.handlers_socket.recv(), use_list=False)
+                msg = msgpack.unpackb(self.handlers_socket.recv(),
+                                      use_list=False)
                 cmd = self._handlers.get(msg[0].decode(), None)
                 resp = None
                 if cmd:
@@ -88,6 +90,7 @@ class PlugWrapper(object):
 def unserializers(*args_unserializers):
     args_unserializers = [unser if unser is not None else lambda x: x
                           for unser in args_unserializers]
+
     def decorator(f):
         @functools.wraps(f)
         def wrapper(*args):
@@ -105,51 +108,50 @@ def update_file(metadata, path, mtime=None):
     try:
         metadata.size = path.size
         metadata.extra['revision'] = mtime if mtime else path.mtime
-    except (IOError, OSError) as e:
-        pass # Report to plug
+    except (IOError, OSError):
+        pass  # Report to plug
     else:
         plug.update_file(metadata)
-
 
 
 @plug.handler()
 @unserializers(metadata_unserialize)
 def start_upload(metadata):
-    print('START', metadata.filename)
+    # print('START', metadata.filename)
     filename = root.joinpath(metadata.filename)
     tmp_file = to_tmp(filename)
     try:
         if not tmp_file.exists():
             tmp_file.dirname().makedirs_p()
         tmp_file.open('wb').close()
-    except IOError as e:
-        pass # Report to plug
+    except IOError:
+        pass  # Report to plug
 
 
 @plug.handler()
 @unserializers(metadata_unserialize, None, None)
 def upload_chunk(metadata, offset, chunk):
-    print('UPLOAD', metadata.filename, offset, chunk)
+    # print('UPLOAD', metadata.filename, offset, chunk)
     tmp_file = to_tmp(root.joinpath(metadata.filename))
     try:
         with open(tmp_file, 'r+b') as f:
             f.seek(offset)
             f.write(chunk)
-    except (IOError, OSError) as e:
-        pass # Report to plug
+    except (IOError, OSError):
+        pass  # Report to plug
 
 
 @plug.handler()
 @unserializers(metadata_unserialize)
 def end_upload(metadata):
-    print('END', metadata.filename)
+    # print('END', metadata.filename)
     filename = root.joinpath(metadata.filename)
     tmp_file = to_tmp(filename)
     try:
         tmp_file.move(filename)
         mtime = filename.mtime
-    except (IOError, OSError) as e:
-        pass # Report to plug
+    except (IOError, OSError):
+        pass  # Report to plug
     metadata.extra['revision'] = mtime
     metadata.write()
 
@@ -157,26 +159,26 @@ def end_upload(metadata):
 @plug.handler()
 @unserializers(metadata_unserialize)
 def abort_upload(metadata):
-    print('ABORT', metadata.filename)
+    # print('ABORT', metadata.filename)
     filename = root.joinpath(metadata.filename)
     tmp_file = to_tmp(filename)
     try:
         tmp_file.unlink()
-    except (IOError, OSError) as e:
-        pass # Report to plug
+    except (IOError, OSError):
+        pass  # Report to plug
 
 
 @plug.handler()
 @unserializers(metadata_unserialize, None, None)
 def get_chunk(metadata, offset, size):
-    print('GET', metadata.filename, offset, size)
+    # print('GET', metadata.filename, offset, size)
     filename = root.joinpath(metadata.filename)
     try:
         with open(filename, 'rb') as f:
             f.seek(offset)
             return f.read(size)
-    except (IOError, OSError) as e:
-        pass # Report to plug
+    except (IOError, OSError):
+        pass  # Report to plug
 
 
 class Watcher(pyinotify.ProcessEvent):
@@ -188,11 +190,11 @@ class Watcher(pyinotify.ProcessEvent):
 
         filename = root.relpathto(abs_path)
         metadata = plug.get_metadata(filename)
-        print(metadata_serializer(metadata))
+        # print(metadata_serializer(metadata))
         update_file(metadata, abs_path)
 
 
-print('Connected')
+# print('Connected')
 
 manager = pyinotify.WatchManager()
 notifier = pyinotify.ThreadedNotifier(manager, Watcher())
@@ -202,6 +204,6 @@ notifier.start()
 mask = pyinotify.IN_CREATE | pyinotify.IN_CLOSE_WRITE
 manager.add_watch(root, mask, rec=True, auto_add=True)
 
-#check_changes()
+# check_changes()
 plug.listen()
 notifier.stop()
