@@ -52,9 +52,13 @@ class PlugWrapper(object):
             while True:
                 msg = msgpack.unpackb(self.handlers_socket.recv(), use_list=False)
                 cmd = self._handlers.get(msg[0].decode(), None)
+                resp = None
                 if cmd:
-                    cmd(*msg[1:])
-                self.handlers_socket.send(b'merci')
+                    resp = cmd(*msg[1:])
+                if resp is None:
+                    self.handlers_socket.send(b'merci')
+                else:
+                    self.handlers_socket.send(resp)
         except KeyboardInterrupt:
             self.handlers_socket.close()
             self.server_socket.close()
@@ -63,8 +67,12 @@ class PlugWrapper(object):
         self.server_socket.send(msgpack.packb(('get_metadata', filename)))
         m = msgpack.unpackb(self.server_socket.recv())
         metadata = metadata_unserialize(m)
-        print(m)
         return metadata
+
+    def update_file(self, metadata):
+        m = metadata_serializer(metadata)
+        self.server_socket.send(msgpack.packb(('update_file', m)))
+        self.server_socket.recv()
 
     def handler(self, name_=None):
         def decorator(h):
@@ -91,6 +99,17 @@ def unserializers(*args_unserializers):
 
 
 plug = PlugWrapper('tcp://127.0.0.1:15348', 'tcp://127.0.0.1:15349')
+
+
+def update_file(metadata, path, mtime=None):
+    try:
+        metadata.size = path.size
+        metadata.extra['revision'] = mtime if mtime else path.mtime
+    except (IOError, OSError) as e:
+        pass # Report to plug
+    else:
+        plug.update_file(metadata)
+
 
 
 @plug.handler()
@@ -147,6 +166,19 @@ def abort_upload(metadata):
         pass # Report to plug
 
 
+@plug.handler()
+@unserializers(metadata_unserialize, None, None)
+def get_chunk(metadata, offset, size):
+    print('GET', metadata.filename, offset, size)
+    filename = root.joinpath(metadata.filename)
+    try:
+        with open(filename, 'rb') as f:
+            f.seek(offset)
+            return f.read(size)
+    except (IOError, OSError) as e:
+        pass # Report to plug
+
+
 class Watcher(pyinotify.ProcessEvent):
     def process_IN_CLOSE_WRITE(self, event):
         abs_path = path(event.pathname)
@@ -156,10 +188,8 @@ class Watcher(pyinotify.ProcessEvent):
 
         filename = root.relpathto(abs_path)
         metadata = plug.get_metadata(filename)
-        #update_file(metadata, abs_path)
-        plug.server_socket.send(msgpack.packb((b'file_change', filename))) # -> update_file
-        print(filename)
-        print(plug.server_socket.recv())
+        print(metadata_serializer(metadata))
+        update_file(metadata, abs_path)
 
 
 print('Connected')
