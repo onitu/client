@@ -1,6 +1,7 @@
 #!/usr/bin/env python2
 
 import functools
+import uuid
 
 import zmq
 import msgpack
@@ -42,39 +43,48 @@ def metadata_unserialize(m):
 class PlugWrapper(object):
     def __init__(self, addr, queries_addr):
         ctx = zmq.Context.instance()
-        self.handlers_socket = ctx.socket(zmq.REP)
+        #self.handlers_socket = ctx.socket(zmq.REP)
+        identity = uuid.uuid4().hex
+        self.handlers_socket = ctx.socket(zmq.REQ)
+        self.handlers_socket.identity = identity
         self.handlers_socket.connect(addr)
         self.server_socket = ctx.socket(zmq.REQ)
+        self.server_socket.identity = identity
         self.server_socket.connect(queries_addr)
         self._handlers = {}
+        
+        self.server_socket.send_multipart((b'', b'start'))
+        self.server_identity = self.server_socket.recv()
+        self.handlers_socket.send_multipart((b'', b'ready'))
 
     def listen(self):
         try:
             while True:
-                msg = msgpack.unpackb(self.handlers_socket.recv(),
+                _, msg = self.handlers_socket.recv_multipart()
+                msg = msgpack.unpackb(msg,
                                       use_list=False)
                 cmd = self._handlers.get(msg[0].decode(), None)
                 resp = None
                 if cmd:
                     resp = cmd(*msg[1:])
                 if resp is None:
-                    self.handlers_socket.send(b'merci')
+                    self.handlers_socket.send_multipart(self.server_identity, b'merci')
                 else:
-                    self.handlers_socket.send(resp)
+                    self.handlers_socket.send_multipart(self.server_identity, resp)
         except KeyboardInterrupt:
             self.handlers_socket.close()
             self.server_socket.close()
 
     def get_metadata(self, filename):
-        self.server_socket.send(msgpack.packb(('get_metadata', filename)))
-        m = msgpack.unpackb(self.server_socket.recv())
+        self.server_socket.send_multipart(self.server_identity, msgpack.packb(('get_metadata', filename)))
+        _, m = msgpack.unpackb(self.server_socket.recv_multipart())
         metadata = metadata_unserialize(m)
         return metadata
 
     def update_file(self, metadata):
         m = metadata_serializer(metadata)
-        self.server_socket.send(msgpack.packb(('update_file', m)))
-        self.server_socket.recv()
+        self.server_socket.send_multipart(self.server_identity, msgpack.packb(('update_file', m)))
+        self.server_socket.recv_multipart()
 
     def handler(self, name_=None):
         def decorator(h):
@@ -101,7 +111,8 @@ def unserializers(*args_unserializers):
     return decorator
 
 
-plug = PlugWrapper('tcp://127.0.0.1:15348', 'tcp://127.0.0.1:15349')
+#plug = PlugWrapper('tcp://127.0.0.1:15348', 'tcp://127.0.0.1:15349')
+plug = PlugWrapper('tcp://127.0.0.1:20003', 'tcp://127.0.0.1:20001')
 
 
 def update_file(metadata, path, mtime=None):
