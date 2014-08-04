@@ -4,12 +4,16 @@ import uuid
 import threading
 
 import zmq
+import zmq.auth
 
 ctx = zmq.Context()
 client_identity = uuid.uuid4().hex
 
 requests = ctx.socket(zmq.REQ)
 requests.identity = client_identity
+keys = zmq.auth.load_certificate('keys/client.key_secret')
+requests.curve_publickey, requests.curve_secretkey = keys
+requests.curve_serverkey, _ = zmq.auth.load_certificate('keys/server.key')
 requests.connect('tcp://127.0.0.1:20001')
 
 requests.send_multipart((b'', b'start'))
