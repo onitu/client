@@ -74,7 +74,7 @@ class PlugProxy(object):
 
         self.requests_socket.send_multipart((b'', b'start'))
         self.handlers_socket.send_multipart((b'', b'ready'))
-        self.serv_identity = self.requests_socket.recv()
+        self.serv_identity, _ = self.requests_socket.recv_multipart()
         print self.serv_identity
 
         self.options = {'root': 'files'}
@@ -104,7 +104,7 @@ class PlugProxy(object):
 
     def get_metadata(self, filename):
         print 'GET_METADATA'
-        with self.plug.requests_lock:
+        with self.requests_lock:
             self.requests_socket.send_multipart((self.serv_identity, msgpack.packb(('get_metadata', filename))))
             _, m = self.requests_socket.recv_multipart()
         metadata = self.metadata_unserialize(msgpack.unpackb(m))
@@ -114,7 +114,7 @@ class PlugProxy(object):
     def update_file(self, metadata):
         print 'UPDATE_FILE'
         m = metadata_serializer(metadata)
-        with self.plug.requests_lock:
+        with self.requests_lock:
             self.requests_socket.send_multipart((self.serv_identity, msgpack.packb(('update_file', m))))
             self.requests_socket.recv_multipart()
 
