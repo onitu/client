@@ -8,6 +8,10 @@ import zmq.auth
 import msgpack
 
 
+DriverError = Exception
+ServiceError = Exception
+
+
 def metadata_serializer(m):
     props = [getattr(m, p) for p in m.PROPERTIES]
     return m.fid, props, m.extra
@@ -16,28 +20,36 @@ def metadata_serializer(m):
 class MetadataWrapper(object):
     PROPERTIES = ('filename', 'size', 'owners', 'uptodate')
 
-    def __init__(self, fid, props, extra):
+    def __init__(self, plug, fid, props, extra):
+        self.plug = plug
         self.fid = fid
         for name, value in zip(self.PROPERTIES, props):
             setattr(self, name, value)
         self.extra = extra
 
-    #def write(self):
-    #    plug.server_socket.send(msgpack.packb((b'metadata write',
-    #                                           metadata_serializer(self))))
-    #    plug.server_socket.recv()
+    def write(self):
+        print 'METADATA:WRITE'
+        with self.plug.requests_lock:
+            self.plug.requests_socket.send_multipart((self.plug.serv_identity,
+                                                      msgpack.packb((b'metadata write',
+                                                                     metadata_serializer(self)))))
+            self.plug.requests_socket.recv()
 
 
-def metadata_unserialize(m):
-    return MetadataWrapper(*m)
+#def metadata_unserialize(m):
+#    return MetadataWrapper(*m)
 
-unserializers = {
-    'metadata': metadata_unserialize
-}
+#unserializers = {
+#    'metadata': metadata_unserialize
+#}
 
 
 class PlugProxy(object):
     def __init__(self, requests_addr, handlers_addr):
+        self.unserializers = {
+            'metadata': self.metadata_unserialize
+        }
+
         self._handlers = {}
 
         ctx = zmq.Context.instance()
@@ -51,6 +63,7 @@ class PlugProxy(object):
         self.requests_socket.curve_secretkey = priv_key
         self.requests_socket.curve_serverkey = server_key
         self.requests_socket.connect(requests_addr)
+        self.requests_lock = threading.Lock()
 
         self.handlers_socket = ctx.socket(zmq.REQ)
         self.handlers_socket.identity = identity
@@ -64,14 +77,19 @@ class PlugProxy(object):
         self.serv_identity = self.requests_socket.recv()
         print self.serv_identity
 
+        self.options = {'root': 'files'}
+
+    def metadata_unserialize(self, m):
+        return MetadataWrapper(self, *m)
+
     def listen(self):
         while True:
             _, msg = self.handlers_socket.recv_multipart()
             msg = msgpack.unpackb(msg, use_list=False)
-            print msg
+            print 'HANDLER', msg
             cmd = self._handlers.get(msg[0].decode(), None)
             args = msg[1:]
-            args = [unserializers.get(ser, lambda x: x)(arg) for (ser, arg) in args]
+            args = [self.unserializers.get(ser, lambda x: x)(arg) for (ser, arg) in args]
             if cmd:
                 resp = cmd(*args)
             else:
@@ -84,28 +102,49 @@ class PlugProxy(object):
             return h
         return decorator
 
+    def get_metadata(self, filename):
+        print 'GET_METADATA'
+        with self.plug.requests_lock:
+            self.requests_socket.send_multipart((self.serv_identity, msgpack.packb(('get_metadata', filename))))
+            _, m = self.requests_socket.recv_multipart()
+        metadata = self.metadata_unserialize(msgpack.unpackb(m))
+        print metadata
+        return metadata
 
-class Thread(threading.Thread):
+    def update_file(self, metadata):
+        print 'UPDATE_FILE'
+        m = metadata_serializer(metadata)
+        with self.plug.requests_lock:
+            self.requests_socket.send_multipart((self.serv_identity, msgpack.packb(('update_file', m))))
+            self.requests_socket.recv_multipart()
+
+
+#class Thread(threading.Thread):
+#    def __init__(self):
+#        threading.Thread.__init__(self)
+
+#    def run(self):
+#        while True:
+#            msg = raw_input().encode()
+#            plug.requests_socket.send_multipart((plug.serv_identity, msg))
+#            rep_id, msg = plug.requests_socket.recv_multipart()
+#            print 'Recv', msg, 'from', rep_id
+
+
+#plug = PlugProxy('tcp://127.0.0.1:20001', 'tcp://127.0.0.1:20003')
+
+
+#@plug.handler()
+#def start_upload(metadata):
+#    print 'START UPLOAD'
+#    print metadata
+
+
+#thread = Thread()
+#thread.start()
+#plug.listen()
+
+
+class Plug(PlugProxy):
     def __init__(self):
-        threading.Thread.__init__(self)
-
-    def run(self):
-        while True:
-            msg = raw_input().encode()
-            plug.requests_socket.send_multipart((plug.serv_identity, msg))
-            rep_id, msg = plug.requests_socket.recv_multipart()
-            print 'Recv', msg, 'from', rep_id
-
-
-plug = PlugProxy('tcp://127.0.0.1:20001', 'tcp://127.0.0.1:20003')
-
-
-@plug.handler()
-def start_upload(metadata):
-    print 'START UPLOAD'
-    print metadata
-
-
-thread = Thread()
-thread.start()
-plug.listen()
+        super(Plug, self).__init__('tcp://127.0.0.1:20001', 'tcp://127.0.0.1:20003')
