@@ -310,6 +310,6 @@ def start():
     if not root.access(os.W_OK | os.R_OK):
         raise DriverError("The root '{}' is not accessible".format(root))
 
-    #watch_changes()
-    #check_changes()
+    watch_changes()
+    check_changes()
     plug.listen()

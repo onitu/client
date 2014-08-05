@@ -33,7 +33,7 @@ class MetadataWrapper(object):
             self.plug.requests_socket.send_multipart((self.plug.serv_identity,
                                                       msgpack.packb((b'metadata write',
                                                                      metadata_serializer(self)))))
-            self.plug.requests_socket.recv()
+            print repr(self.plug.requests_socket.recv_multipart())
 
 
 #def metadata_unserialize(m):
