@@ -74,8 +74,8 @@ class PlugProxy(object):
 
         self.requests_socket.send_multipart((b'', b'start'))
         self.handlers_socket.send_multipart((b'', b'ready'))
-        self.serv_identity, _ = self.requests_socket.recv_multipart()
-        print self.serv_identity
+        self.serv_identity, self.name = self.requests_socket.recv_multipart()
+        print self.serv_identity, self.name
 
         self.options = {'root': 'files'}
 
@@ -116,6 +116,20 @@ class PlugProxy(object):
         m = metadata_serializer(metadata)
         with self.requests_lock:
             self.requests_socket.send_multipart((self.serv_identity, msgpack.packb(('update_file', m))))
+            self.requests_socket.recv_multipart()
+
+    def delete_file(self, metadata):
+        print 'DELETE_FILE'
+        m = metadata_serializer(metadata)
+        with self.requests_lock:
+            self.requests_socket.send_multipart((self.serv_identity, msgpack.packb(('delete_file', m))))
+            self.requests_socket.recv_multipart()
+
+    def move_file(self, old_metadata, new_filename):
+        print 'MOVE_FILE'
+        old_m = metadata_serializer(old_metadata)
+        with self.requests_lock:
+            self.requests_socket.send_multipart((self.serv_identity, msgpack.packb(('move_file', old_m, new_filename))))
             self.requests_socket.recv_multipart()
 
 
