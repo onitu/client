@@ -49,35 +49,42 @@ class PlugProxy(object):
         self.unserializers = {
             'metadata': self.metadata_unserialize
         }
-
         self._handlers = {}
+        self.context = zmq.Context.instance()
+        self.requests_addr = requests_addr
+        self.handlers_addr = handlers_addr
+        self.requests_socket = None
+        self.handlers_socket = None
+        self.requests_lock = None
+        self.options = {}
 
-        ctx = zmq.Context.instance()
+    def initialize(self):
         identity = uuid.uuid4().hex
         pub_key, priv_key = zmq.auth.load_certificate('keys/client.key_secret')
         server_key, _ = zmq.auth.load_certificate('keys/server.key')
 
-        self.requests_socket = ctx.socket(zmq.REQ)
+        self.requests_lock = threading.Lock()
+
+        self.requests_socket = self.context.socket(zmq.REQ)
         self.requests_socket.identity = identity
         self.requests_socket.curve_publickey = pub_key
         self.requests_socket.curve_secretkey = priv_key
         self.requests_socket.curve_serverkey = server_key
-        self.requests_socket.connect(requests_addr)
-        self.requests_lock = threading.Lock()
+        self.requests_socket.connect(self.requests_addr)
 
-        self.handlers_socket = ctx.socket(zmq.REQ)
+        self.handlers_socket = self.context.socket(zmq.REQ)
         self.handlers_socket.identity = identity
         self.handlers_socket.curve_publickey = pub_key
         self.handlers_socket.curve_secretkey = priv_key
         self.handlers_socket.curve_serverkey = server_key
-        self.handlers_socket.connect(handlers_addr)
+        self.handlers_socket.connect(self.handlers_addr)
 
         self.requests_socket.send_multipart((b'', b'start'))
         self.handlers_socket.send_multipart((b'', b'ready'))
         self.serv_identity, self.name = self.requests_socket.recv_multipart()
         print self.serv_identity, self.name
 
-        self.options = {'root': 'files'}
+        self.options['root'] = 'files'
 
     def metadata_unserialize(self, m):
         return MetadataWrapper(self, *m)
