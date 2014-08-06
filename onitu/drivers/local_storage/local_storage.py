@@ -2,10 +2,8 @@ import os
 
 from path import path
 
-#from onitu.plug import Plug, DriverError, ServiceError
-#from onitu.utils import IS_WINDOWS
-from onitu_client import Plug, DriverError, ServiceError
-IS_WINDOWS = False
+from onitu.plug import Plug, DriverError, ServiceError
+from onitu.utils import IS_WINDOWS
 
 if IS_WINDOWS:
     import threading
