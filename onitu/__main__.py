@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 
 import argparse
+import json
+from importlib import import_module
 
 from logbook import Logger, INFO, DEBUG, NullHandler, NestedSetup
 from logbook.queues import ZeroMQHandler, ZeroMQSubscriber
 from logbook.more import ColorizedStderrHandler
 
 from .utils import get_open_port
-from drivers import local_storage
+
 
 def get_logs_dispatcher(uri=None, debug=False):
     """Configure the dispatcher that will print the logs received
@@ -59,7 +61,13 @@ if __name__ == '__main__':
 
     with ZeroMQHandler(log_uri, multi=True):
         logger = Logger("Onitu client")
-        #setup = get_setup(args.setup)
+        setup = get_setup(args.setup)
 
-        local_storage.plug.initialize()
-        local_storage.start()
+        driver = import_module("onitu.drivers.{}".format(setup['driver']))
+        driver.plug.initialize(setup['requests_addr'], setup['handlers_addr'], setup['options'])
+        driver.start()
+
+        logger.info("Exiting...")
+        if dispatcher:
+            dispatcher.stop()
+
