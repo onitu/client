@@ -65,7 +65,9 @@ if __name__ == '__main__':
 
         try:
             driver = import_module("onitu.drivers.{}".format(setup['driver']))
-            driver.plug.initialize(setup['requests_addr'], setup['handlers_addr'], setup['options'])
+            driver.plug.initialize(setup['requests_addr'],
+                                   setup['handlers_addr'],
+                                   setup['options'])
             driver.start()
         except (KeyboardInterrupt, SystemExit):
             pass
@@ -73,4 +75,3 @@ if __name__ == '__main__':
             logger.info("Exiting...")
             if dispatcher:
                 dispatcher.stop()
-

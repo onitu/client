@@ -7,6 +7,8 @@ import zmq
 import zmq.auth
 import msgpack
 
+from logbook import Logger
+
 
 DriverError = Exception
 ServiceError = Exception
@@ -28,12 +30,9 @@ class MetadataWrapper(object):
         self.extra = extra
 
     def write(self):
-        print 'METADATA:WRITE'
-        with self.plug.requests_lock:
-            self.plug.requests_socket.send_multipart((self.plug.serv_identity,
-                                                      msgpack.packb((b'metadata write',
-                                                                     metadata_serializer(self)))))
-            print repr(self.plug.requests_socket.recv_multipart())
+        self.plug.logger.debug('metadata:write {}', self.filename)
+        self.plug.request(msgpack.packb((b'metadata write',
+                                         metadata_serializer(self))))
 
 
 class PlugProxy(object):
@@ -43,6 +42,7 @@ class PlugProxy(object):
         }
         self._handlers = {}
         self.context = zmq.Context.instance()
+        self.logger = None
         self.requests_socket = None
         self.handlers_socket = None
         self.requests_lock = None
@@ -72,7 +72,10 @@ class PlugProxy(object):
         self.requests_socket.send_multipart((b'', b'start'))
         self.handlers_socket.send_multipart((b'', b'ready'))
         self.serv_identity, self.name = self.requests_socket.recv_multipart()
-        print self.serv_identity, self.name
+
+        self.logger = Logger(self.name)
+        self.logger.info('Started')
+        self.logger.info('Server identity - {}', self.serv_identity)
 
         self.options.update(options)
 
@@ -83,15 +86,23 @@ class PlugProxy(object):
         while True:
             _, msg = self.handlers_socket.recv_multipart()
             msg = msgpack.unpackb(msg, use_list=False)
-            print 'HANDLER', msg
+            self.logger.debug('handler {}', msg)
             cmd = self._handlers.get(msg[0].decode(), None)
             args = msg[1:]
-            args = [self.unserializers.get(ser, lambda x: x)(arg) for (ser, arg) in args]
+            args = [self.unserializers.get(ser, lambda x: x)(arg)
+                    for (ser, arg) in args]
             if cmd:
                 resp = cmd(*args)
             else:
                 resp = None
-            self.handlers_socket.send_multipart((self.serv_identity, msgpack.packb(resp)))
+            self.handlers_socket.send_multipart((self.serv_identity,
+                                                 msgpack.packb(resp)))
+
+    def request(self, msg):
+        with self.requests_lock:
+            self.requests_socket.send_multipart((self.serv_identity, msg))
+            _, resp = self.requests_socket.recv_multipart()
+            return resp
 
     def handler(self, name=None):
         def decorator(h):
@@ -100,34 +111,26 @@ class PlugProxy(object):
         return decorator
 
     def get_metadata(self, filename):
-        print 'GET_METADATA'
-        with self.requests_lock:
-            self.requests_socket.send_multipart((self.serv_identity, msgpack.packb(('get_metadata', filename))))
-            _, m = self.requests_socket.recv_multipart()
+        self.logger.debug('get_metadata {}', filename)
+        m = self.request(msgpack.packb(('get_metadata', filename)))
         metadata = self.metadata_unserialize(msgpack.unpackb(m))
-        print metadata
         return metadata
 
     def update_file(self, metadata):
-        print 'UPDATE_FILE'
+        self.logger.debug('update_file {}', metadata.filename)
         m = metadata_serializer(metadata)
-        with self.requests_lock:
-            self.requests_socket.send_multipart((self.serv_identity, msgpack.packb(('update_file', m))))
-            self.requests_socket.recv_multipart()
+        self.request(msgpack.packb(('update_file', m)))
 
     def delete_file(self, metadata):
-        print 'DELETE_FILE'
+        self.logger.debug('delete_file {}', metadata.filename)
         m = metadata_serializer(metadata)
-        with self.requests_lock:
-            self.requests_socket.send_multipart((self.serv_identity, msgpack.packb(('delete_file', m))))
-            self.requests_socket.recv_multipart()
+        self.request(msgpack.packb(('delete_file', m)))
 
     def move_file(self, old_metadata, new_filename):
-        print 'MOVE_FILE'
+        self.logger.debug('move_file {} to {}',
+                          old_metadata.filename, new_filename)
         old_m = metadata_serializer(old_metadata)
-        with self.requests_lock:
-            self.requests_socket.send_multipart((self.serv_identity, msgpack.packb(('move_file', old_m, new_filename))))
-            self.requests_socket.recv_multipart()
+        self.request(msgpack.packb(('move_file', old_m, new_filename)))
 
 
 Plug = PlugProxy
