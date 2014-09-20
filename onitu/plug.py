@@ -10,8 +10,16 @@ import msgpack
 from logbook import Logger
 
 
-DriverError = Exception
-ServiceError = Exception
+class _HandlerException(Exception):
+    pass
+
+
+class DriverError(_HandlerException):
+    status_code = 1
+
+
+class ServiceError(_HandlerException):
+    status_code = 2
 
 
 def metadata_serializer(m):
@@ -91,10 +99,16 @@ class PlugProxy(object):
             args = msg[1:]
             args = [self.unserializers.get(ser, lambda x: x)(arg)
                     for (ser, arg) in args]
-            if cmd:
-                resp = cmd(*args)
-            else:
-                resp = None
+            try:
+                status = 0
+                if cmd:
+                    resp = cmd(*args)
+                else:
+                    resp = None
+            except _HandlerException as e:
+                status = e.status_code
+                resp = e.args
+            resp = status, resp
             self.handlers_socket.send_multipart((self.serv_identity,
                                                  msgpack.packb(resp)))
 
