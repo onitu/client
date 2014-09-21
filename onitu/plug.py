@@ -87,6 +87,11 @@ class PlugProxy(object):
 
         self.options.update(options)
 
+    def disconnect(self):
+        self.logger.info('Disconnecting')
+        with self.requests_lock:
+            self.requests_socket.send_multipart((b'', b'stop'))
+
     def metadata_unserialize(self, m):
         return MetadataWrapper(self, *m)
 

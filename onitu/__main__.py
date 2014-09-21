@@ -62,6 +62,7 @@ if __name__ == '__main__':
     with ZeroMQHandler(log_uri, multi=True):
         logger = Logger("Onitu client")
         setup = get_setup(args.setup)
+        driver = None
 
         try:
             driver = import_module("onitu.drivers.{}".format(setup['driver']))
@@ -72,6 +73,8 @@ if __name__ == '__main__':
         except (KeyboardInterrupt, SystemExit):
             pass
         finally:
+            if driver is not None:
+                driver.plug.disconnect()
             logger.info("Exiting...")
             if dispatcher:
                 dispatcher.stop()
