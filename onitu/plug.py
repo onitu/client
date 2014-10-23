@@ -2,12 +2,15 @@
 
 import uuid
 import threading
+import time
 
 import zmq
 import zmq.auth
 import msgpack
 
 from logbook import Logger
+
+### SPLIT PLUG ###
 
 
 class _HandlerException(Exception):
@@ -43,6 +46,85 @@ class MetadataWrapper(object):
                                          metadata_serializer(self))))
 
 
+class KeyNotFound(Exception):
+    pass
+
+
+def escalator_request_method(name):
+    def method(self, *args, **kwargs):
+        resp = self.plug.request(msgpack.packb(('escalator', name, args, kwargs)))
+        status, resp = msgpack.unpackb(resp, use_list=False)
+        if status != 1:
+            raise KeyNotFound(*resp)
+        return resp
+    return method
+
+
+class WriteBatch(object):
+    def __init__(self, plug, transaction):
+        self.plug = plug
+        self.transaction = transaction
+        self.requests = []
+
+    def write(self):
+        resp = self.plug.request(msgpack.packb(('escalator', 'batch', [], {'transaction': self.transaction, 'requests': self.requests})))
+        resp = msgpack.unpackb(resp, use_list=False)
+        self.requests = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        if not self.transaction or not type:
+            self.write()
+
+    def put(self, *args, **kwargs):
+        self.requests.append(('put', args, kwargs))
+
+    def delete(self, *args, **kwargs):
+        self.requests.append(('delete', args, kwargs))
+
+
+
+class Escalator(object):
+    def __init__(self, plug):
+        super(Escalator, self).__init__()
+        self.plug = plug
+
+    get = escalator_request_method('get')
+    exists = escalator_request_method('exists')
+    put = escalator_request_method('put')
+    delete = escalator_request_method('delete')
+    range = escalator_request_method('range')
+
+    def write_batch(self, transaction=False):
+        return WriteBatch(self.plug, transaction)
+
+
+#class HeartBeat(threading.Thread):
+#    def __init__(self, identity):
+#        super(HeartBeat, self).__init__()
+#        ctx = zmq.Context.instance()
+#        self.socket = ctx.socket(zmq.REQ)
+#        self.socket.connect('tcp://127.0.0.1:20005')
+#        self.identity = identity
+#
+#        self._stop = threading.Event()
+#
+#    def run(self):
+#        try:
+#            while not self._stop.wait(0):
+#                self._stop.wait(10)
+#                self.socket.send_multipart((self.identity, b'', b'', b'ping'))
+#                msg = self.socket.recv()
+#                print(msg)
+#        except zmq.ContextTerminated:
+#            self.socket.close()
+#
+#    def stop(self):
+#        self._stop.set()
+
+
 class PlugProxy(object):
     def __init__(self):
         self.unserializers = {
@@ -53,8 +135,10 @@ class PlugProxy(object):
         self.logger = None
         self.requests_socket = None
         self.handlers_socket = None
+        #self.heartbeat_socket = None
         self.requests_lock = None
         self.options = {}
+        self.entry_db = Escalator(self)
 
     def initialize(self, requests_addr, handlers_addr, options={}):
         identity = uuid.uuid4().hex
@@ -87,10 +171,17 @@ class PlugProxy(object):
 
         self.options.update(options)
 
-    def disconnect(self):
+        #self.heartbeat = HeartBeat(identity)
+        #self.heartbeat.start()
+
+    def close(self):
         self.logger.info('Disconnecting')
+        #self.heartbeat.stop()
         with self.requests_lock:
             self.requests_socket.send_multipart((b'', b'stop'))
+            self.requests_socket.close()
+        self.handlers_socket.close()
+        self.context.term()
 
     def metadata_unserialize(self, m):
         return MetadataWrapper(self, *m)

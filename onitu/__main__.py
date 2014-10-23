@@ -74,7 +74,7 @@ if __name__ == '__main__':
             pass
         finally:
             if driver is not None:
-                driver.plug.disconnect()
+                driver.plug.close()
             logger.info("Exiting...")
             if dispatcher:
                 dispatcher.stop()
