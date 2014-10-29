@@ -1,0 +1,8 @@
+Logbook==0.7.0
+mccabe==0.2.1
+msgpack-python==0.4.2
+path.py==5.2
+pep8==1.5.7
+pyflakes==0.8.1
+pyinotify==0.9.4
+pyzmq==14.4.0
