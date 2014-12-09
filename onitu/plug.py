@@ -10,6 +10,9 @@ import msgpack
 
 from logbook import Logger
 
+from .escalator.client import Escalator
+from .utils import b, u
+
 ### SPLIT PLUG ###
 
 
@@ -43,62 +46,8 @@ class MetadataWrapper(object):
     def write(self):
         self.plug.logger.debug('metadata:write {}', self.filename)
         self.plug.request(msgpack.packb((b'metadata write',
-                                         metadata_serializer(self))))
-
-
-class KeyNotFound(Exception):
-    pass
-
-
-def escalator_request_method(name):
-    def method(self, *args, **kwargs):
-        resp = self.plug.request(msgpack.packb(('escalator', name, args, kwargs)))
-        status, resp = msgpack.unpackb(resp, use_list=False)
-        if status != 1:
-            raise KeyNotFound(*resp)
-        return resp
-    return method
-
-
-class WriteBatch(object):
-    def __init__(self, plug, transaction):
-        self.plug = plug
-        self.transaction = transaction
-        self.requests = []
-
-    def write(self):
-        resp = self.plug.request(msgpack.packb(('escalator', 'batch', [], {'transaction': self.transaction, 'requests': self.requests})))
-        resp = msgpack.unpackb(resp, use_list=False)
-        self.requests = []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, type, value, traceback):
-        if not self.transaction or not type:
-            self.write()
-
-    def put(self, *args, **kwargs):
-        self.requests.append(('put', args, kwargs))
-
-    def delete(self, *args, **kwargs):
-        self.requests.append(('delete', args, kwargs))
-
-
-
-class Escalator(object):
-    def __init__(self, plug):
-        super(Escalator, self).__init__()
-        self.plug = plug
-
-    get = escalator_request_method('get')
-    exists = escalator_request_method('exists')
-    put = escalator_request_method('put')
-    delete = escalator_request_method('delete')
-    range = escalator_request_method('range')
-
-    def write_batch(self, transaction=False):
-        return WriteBatch(self.plug, transaction)
+                                         metadata_serializer(self)),
+                                        use_bin_type=True))
 
 
 #class HeartBeat(threading.Thread):
@@ -141,7 +90,7 @@ class PlugProxy(object):
         self.entry_db = Escalator(self)
 
     def initialize(self, requests_addr, handlers_addr, options={}):
-        identity = uuid.uuid4().hex
+        identity = b(uuid.uuid4().hex)
         pub_key, priv_key = zmq.auth.load_certificate('keys/client.key_secret')
         server_key, _ = zmq.auth.load_certificate('keys/server.key')
 
@@ -164,6 +113,7 @@ class PlugProxy(object):
         self.requests_socket.send_multipart((b'', b'start'))
         self.handlers_socket.send_multipart((b'', b'ready'))
         self.serv_identity, self.name = self.requests_socket.recv_multipart()
+        self.name = u(self.name)
 
         self.logger = Logger(self.name)
         self.logger.info('Started')
@@ -189,9 +139,9 @@ class PlugProxy(object):
     def listen(self):
         while True:
             _, msg = self.handlers_socket.recv_multipart()
-            msg = msgpack.unpackb(msg, use_list=False)
+            msg = msgpack.unpackb(msg, use_list=False, encoding='utf-8')
             self.logger.debug('handler {}', msg)
-            cmd = self._handlers.get(msg[0].decode(), None)
+            cmd = self._handlers.get(msg[0], None)
             args = msg[1:]
             args = [self.unserializers.get(ser, lambda x: x)(arg)
                     for (ser, arg) in args]
@@ -206,7 +156,7 @@ class PlugProxy(object):
                 resp = e.args
             resp = status, resp
             self.handlers_socket.send_multipart((self.serv_identity,
-                                                 msgpack.packb(resp)))
+                                                 msgpack.packb(resp, use_bin_type=True)))
 
     def request(self, msg):
         with self.requests_lock:
@@ -222,25 +172,25 @@ class PlugProxy(object):
 
     def get_metadata(self, filename):
         self.logger.debug('get_metadata {}', filename)
-        m = self.request(msgpack.packb(('get_metadata', filename)))
-        metadata = self.metadata_unserialize(msgpack.unpackb(m))
+        m = self.request(msgpack.packb(('get_metadata', filename), use_bin_type=True))
+        metadata = self.metadata_unserialize(msgpack.unpackb(m, encoding='utf-8'))
         return metadata
 
     def update_file(self, metadata):
         self.logger.debug('update_file {}', metadata.filename)
         m = metadata_serializer(metadata)
-        self.request(msgpack.packb(('update_file', m)))
+        self.request(msgpack.packb(('update_file', m), use_bin_type=True))
 
     def delete_file(self, metadata):
         self.logger.debug('delete_file {}', metadata.filename)
         m = metadata_serializer(metadata)
-        self.request(msgpack.packb(('delete_file', m)))
+        self.request(msgpack.packb(('delete_file', m), use_bin_type=True))
 
     def move_file(self, old_metadata, new_filename):
         self.logger.debug('move_file {} to {}',
                           old_metadata.filename, new_filename)
         old_m = metadata_serializer(old_metadata)
-        self.request(msgpack.packb(('move_file', old_m, new_filename)))
+        self.request(msgpack.packb(('move_file', old_m), use_bin_type=True))
 
 
 Plug = PlugProxy

@@ -3,7 +3,8 @@ import os
 from path import path
 
 from onitu.plug import Plug, DriverError, ServiceError
-from onitu.utils import IS_WINDOWS
+from onitu.escalator.client import EscalatorClosed
+from onitu.utils import IS_WINDOWS, u
 
 if IS_WINDOWS:
     import threading
@@ -30,7 +31,7 @@ def update(metadata, abs_path, mtime=None):
         metadata.extra['revision'] = mtime if mtime else abs_path.mtime
     except (IOError, OSError) as e:
         raise ServiceError(
-            "Error updating file '{}': {}".format(metadata.filename, e)
+            u"Error updating file '{}': {}".format(metadata.filename, e)
         )
     else:
         plug.update_file(metadata)
@@ -48,7 +49,9 @@ def move(old_metadata, old_path, new_path):
         return
 
     new_filename = root.relpathto(new_path)
-    plug.move_file(old_metadata, new_filename)
+    new_metadata = plug.move_file(old_metadata, new_filename)
+    new_metadata.extra['revision'] = path(root / new_path).mtime
+    new_metadata.write()
 
 
 def delete_empty_dirs(filename):
@@ -81,7 +84,7 @@ def check_changes():
             mtime = abs_path.mtime
         except (IOError, OSError) as e:
             raise ServiceError(
-                "Error updating file '{}': {}".format(filename, e)
+                u"Error updating file '{}': {}".format(filename, e)
             )
             mtime = 0.
 
@@ -99,7 +102,7 @@ def get_chunk(metadata, offset, size):
             return f.read(size)
     except (IOError, OSError) as e:
         raise ServiceError(
-            "Error getting file '{}': {}".format(filename, e)
+            u"Error getting file '{}': {}".format(filename, e)
         )
 
 
@@ -119,7 +122,7 @@ def start_upload(metadata):
                 tmp_file, win32con.FILE_ATTRIBUTE_HIDDEN)
     except IOError as e:
         raise ServiceError(
-            "Error creating file '{}': {}".format(tmp_file, e)
+            u"Error creating file '{}': {}".format(tmp_file, e)
         )
 
 
@@ -133,7 +136,7 @@ def upload_chunk(metadata, offset, chunk):
             f.write(chunk)
     except (IOError, OSError) as e:
         raise ServiceError(
-            "Error writting file '{}': {}".format(tmp_file, e)
+            u"Error writting file '{}': {}".format(tmp_file, e)
         )
 
 
@@ -155,7 +158,7 @@ def end_upload(metadata):
                 filename, win32con.FILE_ATTRIBUTE_NORMAL)
     except (IOError, OSError) as e:
         raise ServiceError(
-            "Error for file '{}': {}".format(filename, e)
+            u"Error for file '{}': {}".format(filename, e)
         )
 
     metadata.extra['revision'] = mtime
@@ -170,7 +173,7 @@ def abort_upload(metadata):
         tmp_file.unlink()
     except (IOError, OSError) as e:
         raise ServiceError(
-            "Error deleting file '{}': {}".format(tmp_file, e)
+            u"Error deleting file '{}': {}".format(tmp_file, e)
         )
 
 
@@ -182,7 +185,7 @@ def delete_file(metadata):
         filename.unlink()
     except (IOError, OSError) as e:
         raise ServiceError(
-            "Error deleting file '{}': {}".format(filename, e)
+            u"Error deleting file '{}': {}".format(filename, e)
         )
 
     delete_empty_dirs(filename)
@@ -201,7 +204,7 @@ def move_file(old_metadata, new_metadata):
         old_filename.rename(new_filename)
     except (IOError, OSError) as e:
         raise ServiceError(
-            "Error moving file '{}': {}".format(old_filename, e)
+            u"Error moving file '{}': {}".format(old_filename, e)
         )
 
     delete_empty_dirs(old_filename)
@@ -249,13 +252,17 @@ if IS_WINDOWS:
                 if (abs_path.isdir() or abs_path.ext == TMP_EXT or
                     not (win32api.GetFileAttributes(abs_path)
                          & win32con.FILE_ATTRIBUTE_NORMAL)):
-                    return
+                    continue
 
                 with file_lock:
                     if actions_names.get(action) == 'write':
                         filename = root.relpathto(abs_path)
-                        metadata = plug.get_metadata(filename)
-                        update(metadata, abs_path)
+
+                        try:
+                            metadata = plug.get_metadata(filename)
+                            update(metadata, abs_path)
+                        except EscalatorClosed:
+                            return
 
     def watch_changes():
         file_lock = threading.Lock()
@@ -275,19 +282,23 @@ else:
             if event.dir:
                 for new in path(event.pathname).walkfiles():
                     old = new.replace(event.pathname, event.src_pathname)
-                    self.process_event(old, move, new)
+                    self.process_event(old, move, u(new))
             else:
-                self.process_event(event.src_pathname, move, event.pathname)
+                self.process_event(event.src_pathname, move, u(event.pathname))
 
         def process_event(self, abs_path, callback, *args):
-            abs_path = path(abs_path)
+            abs_path = path(u(abs_path))
 
             if abs_path.ext == TMP_EXT:
                 return
 
             filename = root.relpathto(abs_path)
-            metadata = plug.get_metadata(filename)
-            callback(metadata, abs_path, *args)
+
+            try:
+                metadata = plug.get_metadata(filename)
+                callback(metadata, abs_path, *args)
+            except EscalatorClosed:
+                return
 
     def watch_changes():
         manager = pyinotify.WatchManager()
@@ -303,10 +314,10 @@ else:
 
 def start():
     global root
-    root = path(plug.options['root'])
+    root = path(u(plug.options['root']))
 
     if not root.access(os.W_OK | os.R_OK):
-        raise DriverError("The root '{}' is not accessible".format(root))
+        raise DriverError(u"The root '{}' is not accessible".format(root))
 
     watch_changes()
     check_changes()

@@ -8,6 +8,8 @@ import uuid
 import signal
 import socket
 import tempfile
+import mimetypes
+import pkg_resources
 
 PY2 = sys.version_info[0] == 2
 PY3 = sys.version_info[0] == 3
@@ -17,6 +19,35 @@ IS_WINDOWS = os.name == 'nt'
 TMPDIR = tempfile.gettempdir()
 
 NAMESPACE_ONITU = uuid.UUID('bcd336f2-d023-4856-bc92-e79dd24b64d7')
+
+UNICODE = unicode if PY2 else str
+
+
+def b(string):
+    """
+    Convert any string (bytes or unicode) to bytes
+    """
+    if type(string) == UNICODE:
+        return string.encode('utf-8')
+    return string
+
+
+def u(string):
+    """
+    Convert any string (bytes or unicode) to unicode
+    """
+    if type(string) == bytes:
+        return string.decode('utf-8')
+    return string
+
+
+def n(string):
+    """
+    Convert any string (bytes or unicode) to native.
+    This is useful to pass it to requests or other modules
+    that change behavior when switching py2/py3.
+    """
+    return (b if PY2 else u)(string)
 
 
 def at_exit(callback, *args, **kwargs):
@@ -51,6 +82,102 @@ def get_fid(filename):
     return str(uuid.uuid5(NAMESPACE_ONITU, filename))
 
 
+def get_mimetype(filename):
+    """
+    Get the MIME type of the given filename.
+
+    This avoids interfaces and clients of the Onitu instances having to
+    determine the MIME type of the files they receive notifications from.
+    """
+
+    mimetype = mimetypes.guess_type(filename)[0]
+
+    # RFC 2046 states in section 4.5.1:
+    # The "octet-stream" subtype is used to indicate that a body contains
+    # arbitrary binary data.
+    if not mimetype:
+        mimetype = 'application/octet-stream'
+
+    return mimetype
+
+
+if IS_WINDOWS:
+    # We can't use IPC sockets on Windows as they are not supported
+    # by ZeroMQ at the moment, so we implement a fallback by creating
+    # a temporary file containing an URI corresponding to an open port.
+    def _get_uri(session, name):
+        sock_file = os.path.join(
+            TMPDIR, u'onitu-{}-{}.txt'
+        ).format(session, name)
+
+        if os.path.exists(sock_file):
+            with open(sock_file) as f:
+                return f.read()
+
+        tmpsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tmpsock.bind(('127.0.0.1', 0))
+        uri = 'tcp://{}:{}'.format(*tmpsock.getsockname())
+        tmpsock.close()
+
+        with open(sock_file, 'w+') as f:
+            f.write(uri)
+
+        return uri
+
+    def delete_sock_files():
+        import glob
+
+        for sock_file in glob.glob(os.path.join(TMPDIR, 'onitu-*.txt')):
+            os.unlink(sock_file)
+else:
+    # On Unix-like systems we use an IPC socket (AF_UNIX)
+    def _get_uri(session, name):
+        return u'ipc://{}/onitu-{}-{}.sock'.format(TMPDIR, session, name)
+
+
+def get_escalator_uri(session):
+    return _get_uri(session, 'escalator')
+
+
+def get_events_uri(session, name, suffix=None):
+    if suffix:
+        name = u"{}:{}".format(name, suffix)
+
+    return _get_uri(session, name)
+
+
+def get_logs_uri(session):
+    return _get_uri(session, 'logs')
+
+
+def get_circusctl_endpoint(session):
+    return _get_uri(session, 'circusctl')
+
+
+def get_pubsub_endpoint(session):
+    return _get_uri(session, 'pubsub')
+
+
+def get_stats_endpoint(session):
+    return _get_uri(session, 'stats')
+
+
+def get_available_drivers():
+    """
+    Return a dict mapping the name of each installed driver with its
+    entry point.
+
+    You can use it like that:
+    ```
+    drivers = get_available_drivers()
+    if 'local_storage' in drivers:
+        local_storage = drivers['local_storage'].load()
+    ```
+    """
+    entry_points = pkg_resources.iter_entry_points('onitu.drivers')
+    return {e.name: e for e in entry_points}
+
+
 def get_open_port():
     """
     Return an URI which can be used to bind a socket to an open port.
@@ -63,25 +190,3 @@ def get_open_port():
     uri = 'tcp://{}:{}'.format(*tmpsock.getsockname())
     tmpsock.close()
     return uri
-
-
-def get_events_uri(session, escalator, name):
-    """
-    Return the URI on which a driver or the Referee should be listening
-    to in order to get new events.
-
-    On Windows, the URI is stored in the database. If it's not present,
-    a valid URI is returned and stored.
-    On Unix, a Unix socket is used.
-    """
-    if not IS_WINDOWS:
-        return 'ipc://{}/onitu-{}-events-{}.sock'.format(TMPDIR, session, name)
-    else:
-        key = 'port:events:{}'.format(name)
-        uri = escalator.get(key, default=None)
-
-        if not uri:
-            uri = get_open_port()
-            escalator.put(key, uri)
-
-        return uri
