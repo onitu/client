@@ -190,7 +190,8 @@ class PlugProxy(object):
         self.logger.debug('move_file {} to {}',
                           old_metadata.filename, new_filename)
         old_m = metadata_serializer(old_metadata)
-        self.request(msgpack.packb(('move_file', old_m), use_bin_type=True))
+        self.request(msgpack.packb(('move_file', old_m, new_filename), use_bin_type=True))
+        return self.get_metadata(new_filename)
 
 
 Plug = PlugProxy
