@@ -2,18 +2,16 @@
 
 import uuid
 import threading
-import time
 
 import zmq
 import zmq.auth
-import msgpack
 
 from logbook import Logger
 
 from .escalator.client import Escalator
-from .utils import b, u
+from .utils import b, u, pack_obj, pack_msg, unpack_msg
 
-### SPLIT PLUG ###
+# ## SPLIT PLUG ###
 
 
 class _HandlerException(Exception):
@@ -45,33 +43,34 @@ class MetadataWrapper(object):
 
     def write(self):
         self.plug.logger.debug('metadata:write {}', self.filename)
-        self.plug.request(msgpack.packb((b'metadata write',
-                                         metadata_serializer(self)),
-                                        use_bin_type=True))
+        self.plug.request(pack_msg('metadata write',
+                                   metadata_serializer(self)))
 
 
-#class HeartBeat(threading.Thread):
-#    def __init__(self, identity):
-#        super(HeartBeat, self).__init__()
-#        ctx = zmq.Context.instance()
-#        self.socket = ctx.socket(zmq.REQ)
-#        self.socket.connect('tcp://127.0.0.1:20005')
-#        self.identity = identity
-#
-#        self._stop = threading.Event()
-#
-#    def run(self):
-#        try:
-#            while not self._stop.wait(0):
-#                self._stop.wait(10)
-#                self.socket.send_multipart((self.identity, b'', b'', b'ping'))
-#                msg = self.socket.recv()
-#                print(msg)
-#        except zmq.ContextTerminated:
-#            self.socket.close()
-#
-#    def stop(self):
-#        self._stop.set()
+"""
+class HeartBeat(threading.Thread):
+    def __init__(self, identity):
+        super(HeartBeat, self).__init__()
+        ctx = zmq.Context.instance()
+        self.socket = ctx.socket(zmq.REQ)
+        self.socket.connect('tcp://127.0.0.1:20005')
+        self.identity = identity
+
+        self._stop = threading.Event()
+
+    def run(self):
+        try:
+            while not self._stop.wait(0):
+                self._stop.wait(10)
+                self.socket.send_multipart((self.identity, b'', b'', b'ping'))
+                msg = self.socket.recv()
+                print(msg)
+        except zmq.ContextTerminated:
+            self.socket.close()
+
+    def stop(self):
+        self._stop.set()
+"""
 
 
 class PlugProxy(object):
@@ -84,7 +83,7 @@ class PlugProxy(object):
         self.logger = None
         self.requests_socket = None
         self.handlers_socket = None
-        #self.heartbeat_socket = None
+        # self.heartbeat_socket = None
         self.requests_lock = None
         self.options = {}
         self.entry_db = Escalator(self)
@@ -121,12 +120,12 @@ class PlugProxy(object):
 
         self.options.update(options)
 
-        #self.heartbeat = HeartBeat(identity)
-        #self.heartbeat.start()
+        # self.heartbeat = HeartBeat(identity)
+        # self.heartbeat.start()
 
     def close(self):
         self.logger.info('Disconnecting')
-        #self.heartbeat.stop()
+        # self.heartbeat.stop()
         with self.requests_lock:
             self.requests_socket.send_multipart((b'', b'stop'))
             self.requests_socket.close()
@@ -139,7 +138,7 @@ class PlugProxy(object):
     def listen(self):
         while True:
             _, msg = self.handlers_socket.recv_multipart()
-            msg = msgpack.unpackb(msg, use_list=False, encoding='utf-8')
+            msg = unpack_msg(msg)
             self.logger.debug('handler {}', msg)
             cmd = self._handlers.get(msg[0], None)
             args = msg[1:]
@@ -156,7 +155,7 @@ class PlugProxy(object):
                 resp = e.args
             resp = status, resp
             self.handlers_socket.send_multipart((self.serv_identity,
-                                                 msgpack.packb(resp, use_bin_type=True)))
+                                                 pack_obj(resp)))
 
     def request(self, msg):
         with self.requests_lock:
@@ -172,25 +171,25 @@ class PlugProxy(object):
 
     def get_metadata(self, filename):
         self.logger.debug('get_metadata {}', filename)
-        m = self.request(msgpack.packb(('get_metadata', filename), use_bin_type=True))
-        metadata = self.metadata_unserialize(msgpack.unpackb(m, encoding='utf-8'))
+        m = self.request(pack_msg('get_metadata', filename))
+        metadata = self.metadata_unserialize(unpack_msg(m))
         return metadata
 
     def update_file(self, metadata):
         self.logger.debug('update_file {}', metadata.filename)
         m = metadata_serializer(metadata)
-        self.request(msgpack.packb(('update_file', m), use_bin_type=True))
+        self.request(pack_msg('update_file', m))
 
     def delete_file(self, metadata):
         self.logger.debug('delete_file {}', metadata.filename)
         m = metadata_serializer(metadata)
-        self.request(msgpack.packb(('delete_file', m), use_bin_type=True))
+        self.request(pack_msg('delete_file', m))
 
     def move_file(self, old_metadata, new_filename):
         self.logger.debug('move_file {} to {}',
                           old_metadata.filename, new_filename)
         old_m = metadata_serializer(old_metadata)
-        self.request(msgpack.packb(('move_file', old_m), use_bin_type=True))
+        self.request(pack_msg('move_file', old_m))
 
 
 Plug = PlugProxy

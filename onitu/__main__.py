@@ -8,7 +8,7 @@ from logbook import Logger, INFO, DEBUG, NullHandler, NestedSetup
 from logbook.queues import ZeroMQHandler, ZeroMQSubscriber
 from logbook.more import ColorizedStderrHandler
 
-from .utils import get_open_port
+from .cutils import get_open_port
 
 
 def get_logs_dispatcher(uri=None, debug=False):

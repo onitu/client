@@ -10,6 +10,7 @@ import socket
 import tempfile
 import mimetypes
 import pkg_resources
+import msgpack
 
 PY2 = sys.version_info[0] == 2
 PY3 = sys.version_info[0] == 3
@@ -48,6 +49,27 @@ def n(string):
     that change behavior when switching py2/py3.
     """
     return (b if PY2 else u)(string)
+
+
+def pack_obj(obj):
+    """
+    Encode an unique object with msgpack
+    """
+    return msgpack.packb(obj, use_bin_type=True)
+
+
+def pack_msg(*args):
+    """
+    Encore a message (list of arguments) with msgpack
+    """
+    return msgpack.packb(args, use_bin_type=True)
+
+
+def unpack_msg(packed):
+    """
+    Decode a packed message with msgpack
+    """
+    return msgpack.unpackb(packed, use_list=False, encoding='utf-8')
 
 
 def at_exit(callback, *args, **kwargs):
@@ -176,17 +198,3 @@ def get_available_drivers():
     """
     entry_points = pkg_resources.iter_entry_points('onitu.drivers')
     return {e.name: e for e in entry_points}
-
-
-def get_open_port():
-    """
-    Return an URI which can be used to bind a socket to an open port.
-
-    The port might be in use between the call to the function and its
-    usage, so this function should be used with care.
-    """
-    tmpsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    tmpsock.bind(('127.0.0.1', 0))
-    uri = 'tcp://{}:{}'.format(*tmpsock.getsockname())
-    tmpsock.close()
-    return uri

@@ -1,4 +1,4 @@
-import msgpack
+from onitu.utils import pack_msg, unpack_msg
 
 
 class KeyNotFound(Exception):
@@ -11,8 +11,8 @@ class EscalatorClosed(Exception):
 
 def escalator_request_method(name):
     def method(self, *args, **kwargs):
-        resp = self.plug.request(msgpack.packb(('escalator', name, args, kwargs), use_bin_type=True))
-        status, resp = msgpack.unpackb(resp, use_list=False, encoding='utf-8')
+        resp = self.plug.request(pack_msg('escalator', name, args, kwargs))
+        status, resp = unpack_msg(resp)
         if status != 1:
             raise KeyNotFound(*resp)
         return resp
@@ -26,8 +26,10 @@ class WriteBatch(object):
         self.requests = []
 
     def write(self):
-        resp = self.plug.request(msgpack.packb(('escalator', 'batch', [], {'transaction': self.transaction, 'requests': self.requests}), use_bin_type=True))
-        resp = msgpack.unpackb(resp, use_list=False, encoding='utf-8')
+        resp = self.plug.request(pack_msg('escalator', 'batch', [],
+                                          {'transaction': self.transaction,
+                                           'requests': self.requests}))
+        unpack_msg(resp)
         self.requests = []
 
     def __enter__(self):
@@ -42,7 +44,6 @@ class WriteBatch(object):
 
     def delete(self, *args, **kwargs):
         self.requests.append(('delete', args, kwargs))
-
 
 
 class Escalator(object):
