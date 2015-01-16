@@ -51,6 +51,7 @@ class Escalator(object):
         super(Escalator, self).__init__()
         self.plug = plug
 
+    clone = escalator_request_method('clone')
     get = escalator_request_method('get')
     exists = escalator_request_method('exists')
     put = escalator_request_method('put')

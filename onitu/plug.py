@@ -30,22 +30,67 @@ def metadata_serializer(m):
     props = [getattr(m, p) for p in m.PROPERTIES]
     return m.fid, props, m.extra
 
+def folder_serializer(f):
+    return f.name, f.path, f.options
 
 class MetadataWrapper(object):
-    PROPERTIES = ('filename', 'size', 'owners', 'uptodate')
+    #PROPERTIES = ('filename', 'size', 'owners', 'uptodate')
+    PROPERTIES = ('filename', 'folder_name', 'size', 'uptodate', 'mimetype')
 
     def __init__(self, plug, fid, props, extra):
         self.plug = plug
         self.fid = fid
         for name, value in zip(self.PROPERTIES, props):
             setattr(self, name, value)
+        self.folder = FolderWrapper.get(plug, self.folder_name)
+        self._path = None
         self.extra = extra
 
     def write(self):
         self.plug.logger.debug('metadata:write {}', self.filename)
-        self.plug.request(pack_msg('metadata write',
+        self.plug.request(pack_msg('metadata_write',
                                    metadata_serializer(self)))
 
+    @property
+    def path(self):
+        if not self._path:
+            self._path = self.folder.join(self.filename)
+        return self._path
+            
+
+class FolderWrapper(object):
+    def __init__(self, name, path, options):
+        self.name = name
+        self.path = path
+        self.options = options
+
+    @classmethod
+    def get_folders(cls, plug):
+        r = plug.request(pack_msg('get_folders'))
+        folders = unpack_msg(r)
+        folders = {name: plug.folder_unserialize(value)
+                   for (name, value) in folders.items()}
+        return folders
+
+    @classmethod
+    def get(cls, plug, folder):
+        r = plug.request(pack_msg('get_folder', folder))
+        return plug.folder_unserialize(unpack_msg(r))
+
+    def relpath(self, filename):
+        if not filename.startswith(self.path):
+            raise DriverError(
+                u"'{}' is not in the folder {}".format(filename, self.name)
+            )
+        return filename[len(self.path):].lstrip('/')
+
+    def join(self, filename):
+        if filename.startswith(self.path):
+            filename = filename[len(self.path):]
+        return self.path.rstrip('/') + '/' + filename.lstrip('/')
+
+    def contains(self, filename):
+        return filename != self.path and filename.startswith(self.path)
 
 """
 class HeartBeat(threading.Thread):
@@ -86,7 +131,7 @@ class PlugProxy(object):
         # self.heartbeat_socket = None
         self.requests_lock = None
         self.options = {}
-        self.entry_db = Escalator(self)
+        self.service_db = Escalator(self)
 
     def initialize(self, requests_addr, handlers_addr, options={}):
         identity = b(uuid.uuid4().hex)
@@ -120,6 +165,8 @@ class PlugProxy(object):
 
         self.options.update(options)
 
+        self.folders = FolderWrapper.get_folders(self)
+
         # self.heartbeat = HeartBeat(identity)
         # self.heartbeat.start()
 
@@ -134,6 +181,9 @@ class PlugProxy(object):
 
     def metadata_unserialize(self, m):
         return MetadataWrapper(self, *m)
+
+    def folder_unserialize(self, f):
+        return FolderWrapper(*f)
 
     def listen(self):
         while True:
@@ -169,9 +219,9 @@ class PlugProxy(object):
             return h
         return decorator
 
-    def get_metadata(self, filename):
-        self.logger.debug('get_metadata {}', filename)
-        m = self.request(pack_msg('get_metadata', filename))
+    def get_metadata(self, filename, folder):
+        self.logger.debug('get_metadata {} {}', filename, folder)
+        m = self.request(pack_msg('get_metadata', filename, folder_serializer(folder)))
         metadata = self.metadata_unserialize(unpack_msg(m))
         return metadata
 
@@ -190,6 +240,34 @@ class PlugProxy(object):
                           old_metadata.filename, new_filename)
         old_m = metadata_serializer(old_metadata)
         self.request(pack_msg('move_file', old_m))
+
+    @property
+    def folders_to_watch(self):
+        return tuple(folder for folder in self.folders.values()
+                     if not any(f.contains(folder.path) for f in self.folders.values()))
+
+    def get_folder(self, filename):
+        folder = None
+        for candidate in self.folders.values():
+            if candidate.contains(filename):
+                if folder:
+                    if folder.contains(candidate.path):
+                        folder = candidate
+                else:
+                    folder = candidate
+        return folder
+
+    def list(self, folder, path=''):
+        #prefix = u'path:{}:{}'.format(folder, path)
+        #return {filename.replace(prefix, '', 1): fid
+        #        for filename, fid in self.escalator.range(prefix)}
+        r = self.request(pack_msg('list', folder_serializer(folder), path))
+        return unpack_msg(r)
+
+    def exists(self, folder, path):
+        #return self.escalator.exists(u'path:{}:{}'.format(folder, path))
+        r = self.request(pack_mag('exists', folder_serializer(folder), path))
+        return unpack_msg(r)
 
 
 Plug = PlugProxy
