@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 import uuid
 import threading
 
@@ -8,119 +6,17 @@ import zmq.auth
 
 from logbook import Logger
 
-from .escalator.client import Escalator
-from .utils import b, u, pack_obj, pack_msg, unpack_msg
-
-# ## SPLIT PLUG ###
-
-
-class _HandlerException(Exception):
-    pass
-
-
-class DriverError(_HandlerException):
-    status_code = 1
-
-
-class ServiceError(_HandlerException):
-    status_code = 2
-
-
-def metadata_serializer(m):
-    props = [getattr(m, p) for p in m.PROPERTIES]
-    return m.fid, props, m.extra
-
-def folder_serializer(f):
-    return f.name, f.path, f.options
-
-class MetadataWrapper(object):
-    PROPERTIES = ('filename', 'folder_name', 'size', 'uptodate', 'mimetype')
-
-    def __init__(self, plug, fid, props, extra):
-        self.plug = plug
-        self.fid = fid
-        for name, value in zip(self.PROPERTIES, props):
-            setattr(self, name, value)
-        self.folder = FolderWrapper.get(plug, self.folder_name)
-        self._path = None
-        self.extra = extra
-
-    def write(self):
-        self.plug.logger.debug('metadata:write {}', self.filename)
-        self.plug.request(pack_msg('metadata_write',
-                                   metadata_serializer(self)))
-
-    @property
-    def path(self):
-        if not self._path:
-            self._path = self.folder.join(self.filename)
-        return self._path
-            
-
-class FolderWrapper(object):
-    def __init__(self, name, path, options):
-        self.name = name
-        self.path = path
-        self.options = options
-
-    @classmethod
-    def get_folders(cls, plug):
-        r = plug.request(pack_msg('get_folders'))
-        folders = unpack_msg(r)
-        folders = {name: plug.folder_unserialize(value)
-                   for (name, value) in folders.items()}
-        return folders
-
-    @classmethod
-    def get(cls, plug, folder):
-        r = plug.request(pack_msg('get_folder', folder))
-        return plug.folder_unserialize(unpack_msg(r))
-
-    def relpath(self, filename):
-        if not filename.startswith(self.path):
-            raise DriverError(
-                u"'{}' is not in the folder {}".format(filename, self.name)
-            )
-        return filename[len(self.path):].lstrip('/')
-
-    def join(self, filename):
-        if filename.startswith(self.path):
-            filename = filename[len(self.path):]
-        return self.path.rstrip('/') + '/' + filename.lstrip('/')
-
-    def contains(self, filename):
-        return filename != self.path and filename.startswith(self.path)
-
-"""
-class HeartBeat(threading.Thread):
-    def __init__(self, identity):
-        super(HeartBeat, self).__init__()
-        ctx = zmq.Context.instance()
-        self.socket = ctx.socket(zmq.REQ)
-        self.socket.connect('tcp://127.0.0.1:20005')
-        self.identity = identity
-
-        self._stop = threading.Event()
-
-    def run(self):
-        try:
-            while not self._stop.wait(0):
-                self._stop.wait(10)
-                self.socket.send_multipart((self.identity, b'', b'', b'ping'))
-                msg = self.socket.recv()
-                print(msg)
-        except zmq.ContextTerminated:
-            self.socket.close()
-
-    def stop(self):
-        self._stop.set()
-"""
-
+from onitu.escalator.client import Escalator
+from onitu.utils import b, u, pack_obj, pack_msg, unpack_msg
+from .metadata import MetadataWrapper, metadata_serializer
+from .folder import FolderWrapper, folder_serializer
+# from .heartbeat import HeartBeat
 
 class PlugProxy(object):
     def __init__(self):
         self.unserializers = {
-            'metadata': self.metadata_unserialize
+            'metadata': self.metadata_unserialize,
+            'folder': self.folder_unserialize
         }
         self._handlers = {}
         self.context = zmq.Context.instance()
@@ -259,16 +155,9 @@ class PlugProxy(object):
         return folder
 
     def list(self, folder, path=''):
-        #prefix = u'path:{}:{}'.format(folder, path)
-        #return {filename.replace(prefix, '', 1): fid
-        #        for filename, fid in self.escalator.range(prefix)}
         r = self.request(pack_msg('list', folder_serializer(folder), path))
         return unpack_msg(r)
 
     def exists(self, folder, path):
-        #return self.escalator.exists(u'path:{}:{}'.format(folder, path))
         r = self.request(pack_mag('exists', folder_serializer(folder), path))
         return unpack_msg(r)
-
-
-Plug = PlugProxy
