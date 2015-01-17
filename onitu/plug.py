@@ -34,7 +34,6 @@ def folder_serializer(f):
     return f.name, f.path, f.options
 
 class MetadataWrapper(object):
-    #PROPERTIES = ('filename', 'size', 'owners', 'uptodate')
     PROPERTIES = ('filename', 'folder_name', 'size', 'uptodate', 'mimetype')
 
     def __init__(self, plug, fid, props, extra):
@@ -154,10 +153,13 @@ class PlugProxy(object):
         self.handlers_socket.curve_serverkey = server_key
         self.handlers_socket.connect(handlers_addr)
 
-        self.requests_socket.send_multipart((b'', b'start'))
+        print(options)
+        self.name = u'client'
+        conf = {'driver': 'local_storage', 'folders': {'test': '/home/rozo_a/Projects/onitu/client/files'}}
+        msg = b'start' + pack_msg(self.name, conf)
+        self.requests_socket.send_multipart((b'', msg))
         self.handlers_socket.send_multipart((b'', b'ready'))
-        self.serv_identity, self.name = self.requests_socket.recv_multipart()
-        self.name = u(self.name)
+        self.serv_identity, _ = self.requests_socket.recv_multipart()
 
         self.logger = Logger(self.name)
         self.logger.info('Started')
