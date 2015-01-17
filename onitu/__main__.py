@@ -10,6 +10,7 @@ from logbook.more import ColorizedStderrHandler
 
 from .cutils import get_open_port
 
+logger = None
 
 def get_logs_dispatcher(uri=None, debug=False):
     """Configure the dispatcher that will print the logs received
@@ -30,10 +31,27 @@ def get_logs_dispatcher(uri=None, debug=False):
 
 
 def get_setup(setup_file):
-    logger.info("Loading setup...")
+    if setup_file.endswith(('.yml', '.yaml')):
+        try:
+            import yaml
+        except ImportError:
+            logger.error(
+                "You provided a YAML setup file, but PyYAML was not found on "
+                "your system."
+            )
+        loader = lambda f: yaml.load(f.read())
+    elif setup_file.endswith('.json'):
+        import json
+        loader = json.load
+    else:
+        logger.error(
+            "The setup file must be either in JSON or YAML."
+        )
+        return
+
     try:
         with open(setup_file) as f:
-            return json.load(f)
+            return loader(f)
     except ValueError as e:
         logger.error("Error parsing '{}' : {}", setup_file, e)
     except Exception as e:
@@ -41,10 +59,14 @@ def get_setup(setup_file):
             "Can't process setup file '{}' : {}", setup_file, e
         )
 
-if __name__ == '__main__':
+def main():
+    global logger
+
+    logger = Logger("Onitu client")
+
     parser = argparse.ArgumentParser("onitu")
     parser.add_argument(
-        '--setup', default='setup.json',
+        '--setup', default='setup.yml',
         help="A JSON file with Onitu's configuration (defaults to setup.json)"
     )
     parser.add_argument(
@@ -60,15 +82,14 @@ if __name__ == '__main__':
     )
 
     with ZeroMQHandler(log_uri, multi=True):
-        logger = Logger("Onitu client")
         setup = get_setup(args.setup)
+        if setup is None:
+            return
         driver = None
 
         try:
-            driver = import_module("onitu.drivers.{}".format(setup['driver']))
-            driver.plug.initialize(setup['requests_addr'],
-                                   setup['handlers_addr'],
-                                   setup['options'])
+            driver = import_module("onitu.drivers.{}".format(setup['service']['driver']))
+            driver.plug.initialize(setup)
             driver.start()
         except (KeyboardInterrupt, SystemExit):
             pass
@@ -78,3 +99,6 @@ if __name__ == '__main__':
             logger.info("Exiting...")
             if dispatcher:
                 dispatcher.stop()
+
+if __name__ == '__main__':
+    main()

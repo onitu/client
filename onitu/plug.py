@@ -132,7 +132,7 @@ class PlugProxy(object):
         self.options = {}
         self.service_db = Escalator(self)
 
-    def initialize(self, requests_addr, handlers_addr, options={}):
+    def initialize(self, setup):
         identity = b(uuid.uuid4().hex)
         pub_key, priv_key = zmq.auth.load_certificate('keys/client.key_secret')
         server_key, _ = zmq.auth.load_certificate('keys/server.key')
@@ -144,18 +144,17 @@ class PlugProxy(object):
         self.requests_socket.curve_publickey = pub_key
         self.requests_socket.curve_secretkey = priv_key
         self.requests_socket.curve_serverkey = server_key
-        self.requests_socket.connect(requests_addr)
+        self.requests_socket.connect(setup['requests_addr'])
 
         self.handlers_socket = self.context.socket(zmq.REQ)
         self.handlers_socket.identity = identity
         self.handlers_socket.curve_publickey = pub_key
         self.handlers_socket.curve_secretkey = priv_key
         self.handlers_socket.curve_serverkey = server_key
-        self.handlers_socket.connect(handlers_addr)
+        self.handlers_socket.connect(setup['handlers_addr'])
 
-        print(options)
-        self.name = u'client'
-        conf = {'driver': 'local_storage', 'folders': {'test': '/home/rozo_a/Projects/onitu/client/files'}}
+        self.name = setup['name']
+        conf = setup['service']
         msg = b'start' + pack_msg(self.name, conf)
         self.requests_socket.send_multipart((b'', msg))
         self.handlers_socket.send_multipart((b'', b'ready'))
@@ -165,7 +164,7 @@ class PlugProxy(object):
         self.logger.info('Started')
         self.logger.info('Server identity - {}', self.serv_identity)
 
-        self.options.update(options)
+        self.options.update(conf.get('options', {}))
 
         self.folders = FolderWrapper.get_folders(self)
 
