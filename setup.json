@@ -1,8 +1,0 @@
-{
-  "driver": "local_storage",
-  "requests_addr": "tcp://127.0.0.1:20001",
-  "handlers_addr": "tcp://127.0.0.1:20003",
-  "options": {
-    "root": "files"
-  }
-}
