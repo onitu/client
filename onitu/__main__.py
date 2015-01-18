@@ -8,7 +8,7 @@ from logbook import Logger, INFO, DEBUG, NullHandler, NestedSetup
 from logbook.queues import ZeroMQHandler, ZeroMQSubscriber
 from logbook.more import ColorizedStderrHandler
 
-from .cutils import get_open_port
+from .utils import get_logs_uri
 
 logger = None
 
@@ -24,7 +24,7 @@ def get_logs_dispatcher(uri=None, debug=False):
     handlers.append(ColorizedStderrHandler(level=INFO))
 
     if not uri:
-        uri = get_open_port()
+        uri = get_logs_uri('client')
 
     subscriber = ZeroMQSubscriber(uri, multi=True)
     return uri, subscriber.dispatch_in_background(setup=NestedSetup(handlers))
@@ -82,6 +82,7 @@ def main():
     )
 
     with ZeroMQHandler(log_uri, multi=True):
+        logger.info('Started')
         setup = get_setup(args.setup)
         if setup is None:
             return
@@ -94,9 +95,9 @@ def main():
         except (KeyboardInterrupt, SystemExit):
             pass
         finally:
+            logger.info("Exiting...")
             if driver is not None:
                 driver.plug.close()
-            logger.info("Exiting...")
             if dispatcher:
                 dispatcher.stop()
 

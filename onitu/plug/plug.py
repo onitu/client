@@ -27,11 +27,15 @@ class PlugProxy(object):
         self.requests_lock = None
         self.options = {}
         self.service_db = Escalator(self)
+        self.serv_identity = None
 
     def initialize(self, setup):
         identity = b(uuid.uuid4().hex)
         pub_key, priv_key = zmq.auth.load_certificate('keys/client.key_secret')
         server_key, _ = zmq.auth.load_certificate('keys/server.key')
+
+        self.name = setup['name']
+        self.logger = Logger(self.name)
 
         self.requests_lock = threading.Lock()
 
@@ -49,14 +53,12 @@ class PlugProxy(object):
         self.handlers_socket.curve_serverkey = server_key
         self.handlers_socket.connect(setup['handlers_addr'])
 
-        self.name = setup['name']
         conf = setup['service']
         msg = b'start' + pack_msg(self.name, conf)
         self.requests_socket.send_multipart((b'', msg))
         self.handlers_socket.send_multipart((b'', b'ready'))
         self.serv_identity, _ = self.requests_socket.recv_multipart()
 
-        self.logger = Logger(self.name)
         self.logger.info('Started')
         self.logger.info('Server identity - {}', self.serv_identity)
 
@@ -70,11 +72,12 @@ class PlugProxy(object):
     def close(self):
         self.logger.info('Disconnecting')
         # self.heartbeat.stop()
-        with self.requests_lock:
-            self.requests_socket.send_multipart((b'', b'stop'))
+        if self.serv_identity is not None:
+            with self.requests_lock:
+                self.requests_socket.send_multipart((b'', b'stop'))
             self.requests_socket.close()
-        self.handlers_socket.close()
-        self.context.term()
+            self.handlers_socket.close()
+            self.context.term()
 
     def metadata_unserialize(self, m):
         return MetadataWrapper(self, *m)
